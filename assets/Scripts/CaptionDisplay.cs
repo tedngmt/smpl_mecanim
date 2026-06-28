@@ -65,7 +65,7 @@ public class CaptionDisplay : MonoBehaviour
         float width = Screen.width - 20;
         float textHeight = style.CalcHeight(new GUIContent(text), width - 20);
         float boxHeight = textHeight + 10;
-        Rect box = new Rect(10, Screen.height - boxHeight - 10, width, boxHeight);
+        Rect box = new Rect(10, 10, width, boxHeight);  // top of screen
         GUI.Box(box, GUIContent.none);
         GUI.Label(new Rect(box.x + 10, box.y + 5, box.width - 20, box.height - 10), text, style);
     }

@@ -66,21 +66,15 @@ Thumbs.db
 
 # SMPL model package (https://smpl.is.tue.mpg.de) is licensed for research use only and
 # may not be redistributed -- download it yourself and extract into assets/SMPL/.
-# Two files are exceptions: kept tracked here because they carry local modifications used
-# by the MotionStreamClient pipeline --
-#   * SMPLBlendshapes.cs  -- ApplyStreamedPose / ApplyStreamedJoints bridges
-#   * SMPLModifyBones.cs  -- updateBoneAnglesFromJoints position-based retarget
+# Only the C# SCRIPTS under Scripts/ are tracked (they carry our local modifications and
+# are needed to compile). The licensed MODEL ASSETS stay out of git: the FBX models
+# (Models/), the materials + textures (Samples/, Models/Materials/), the sample betas, and
+# the joint-regressor data -- re-download and re-apply those from the SMPL site after clone.
 /assets/SMPL/*
 !/assets/SMPL/Scripts.meta
-!/assets/SMPL/Scripts
-/assets/SMPL/Scripts/*
-!/assets/SMPL/Scripts/mpi.meta
-!/assets/SMPL/Scripts/mpi
-/assets/SMPL/Scripts/mpi/*
-!/assets/SMPL/Scripts/mpi/SMPLBlendshapes.cs
-!/assets/SMPL/Scripts/mpi/SMPLBlendshapes.cs.meta
-!/assets/SMPL/Scripts/mpi/SMPLModifyBones.cs
-!/assets/SMPL/Scripts/mpi/SMPLModifyBones.cs.meta
+!/assets/SMPL/Scripts/
+/assets/SMPL/Scripts/mpi/jnt_regressors/
+/assets/SMPL/Scripts/mpi/jnt_regressors.meta
 
 # Mocap animation clips (Idle/Walk/Run/Crouch FBX) bought from the Unity Asset Store
 # (package #5330, https://www.assetstore.unity3d.com/en/#!/content/5330) -- not ours to

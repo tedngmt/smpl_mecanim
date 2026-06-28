@@ -54,6 +54,29 @@ public class SMPLModifyBones {
     // basis instead of a single child, so it is -1 here.
     private static readonly int[] _primaryChild = new int[] {
         -1, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1, -1, 15, 16, 17, -1, 18, 19, 20, 21, -1, -1 };
+    // Parent joint index per joint (-1 = root). Used so a child can inherit its parent's
+    // twist instead of being given an independent world rotation.
+    private static readonly int[] _parent = new int[] {
+        -1, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 12, 13, 14, 16, 17, 18, 19 };
+
+    // Spine chain + neck get a FULL orientation basis (not just aim-at-child) so body
+    // *twist* (turning about the vertical axis) is captured -- aim-only bones can't, which
+    // shears the torso mesh when the person turns. The left/right reference blends from the
+    // hip line (bottom) to the shoulder line (top) along the spine.
+    private static readonly int[] _torsoJoints = { 3, 6, 9, 12 };   // Spine1, Spine2, Spine3, Neck
+    private static readonly float[] _torsoBlend = { 0.34f, 0.67f, 1.0f, 1.0f };  // hips->shoulders
+    private bool[] _isTorso;                // per joint, true for the spine/neck chain
+    private float[] _torsoBlendByJoint;     // per joint hips->shoulders blend factor
+    private Quaternion[] _torsoBindBasis;   // bind basis for each torso joint, avatar-local
+
+    // Hip (thigh) twist: swing-only leaves the thigh roll arbitrary, so the knee can point
+    // the wrong way. Recover it from the knee->ankle direction as a bend pole. The bind pose
+    // has straight legs (no bend plane), so the bind twist is anchored to the body's
+    // backward direction (knees bend back). If the thighs come out twisted ~180 deg, flip
+    // HIP_POLE_SIGN to +1f.
+    private const float HIP_POLE_SIGN = -1f;
+    private bool[] _isHipBasis;             // true for L/R Hip when a bend pole was captured
+    private Quaternion[] _hipBindBasis;     // bind basis for L/R Hip (indices 1, 2), avatar-local
 
 	public SMPLModifyBones(SkinnedMeshRenderer tr)
     {
@@ -98,7 +121,7 @@ public class SMPLModifyBones {
 	public bool initialize() {
 		if (targetRenderer == null)
 		{
-			throw new System.ArgumentNullException("ERROR: The script should be added to the 'SkinnedMeshRenderer Object");
+			Debug.LogError("ERROR: The script should be added to the SkinnedMeshRenderer object");
 			return false;
 		}
 
@@ -290,7 +313,6 @@ public class SMPLModifyBones {
 		_jointBones[0].rotation = aRot * pelvisLocal;
 		_jointBones[0].position = avatarT.TransformPoint(targets[0]);
 
-		// All other bones: swing the bind bone direction onto the current target direction.
 		for (int i = 1; i < 22; i++)
 		{
 			int c = _primaryChild[i];
@@ -299,8 +321,47 @@ public class SMPLModifyBones {
 			Vector3 dT = targets[c] - targets[i];
 			if (dT.sqrMagnitude < 1e-12f)
 				continue;
-			Quaternion swing = Quaternion.FromToRotation(_bindDirLocal[i], dT.normalized);
-			_jointBones[i].rotation = aRot * (swing * _bindRotLocal[i]);
+
+			if (_isTorso[i])
+			{
+				// Spine/neck: full basis (up = toward child, right = blended hip/shoulder
+				// line) so torso twist is reproduced instead of shearing the mesh.
+				Vector3 up = dT.normalized;
+				Vector3 right = TorsoRight(targets, _torsoBlendByJoint[i]);
+				Quaternion bT = Quaternion.LookRotation(Vector3.Cross(right, up).normalized, up);
+				_jointBones[i].rotation = aRot * ((bT * Quaternion.Inverse(_torsoBindBasis[i])) * _bindRotLocal[i]);
+			}
+			else
+			{
+				bool done = false;
+
+				// Hip (thigh): recover twist from the knee->ankle bend pole so the knee
+				// points the right way. Other limbs stay swing-only.
+				if ((i == 1 || i == 2) && _isHipBasis[i])
+				{
+					int g = _primaryChild[c];   // ankle
+					Quaternion tgtBasis;
+					if (g >= 0 && TryAimPoleBasis(dT, targets[g] - targets[c], out tgtBasis))
+					{
+						_jointBones[i].rotation = aRot * ((tgtBasis * Quaternion.Inverse(_hipBindBasis[i])) * _bindRotLocal[i]);
+						done = true;
+					}
+				}
+
+				if (!done)
+				{
+					// Parent-relative swing: inherit the parent's (already-set) world rotation
+					// so the child follows the parent's twist, then bend only to aim at the
+					// next joint. Avoids the child being twisted relative to its parent.
+					int p = _parent[i];
+					Quaternion inheritedWorld = _jointBones[p].rotation
+						* (Quaternion.Inverse(_bindRotLocal[p]) * _bindRotLocal[i]);
+					Vector3 inheritedAim = inheritedWorld
+						* (Quaternion.Inverse(_bindRotLocal[i]) * _bindDirLocal[i]);
+					Quaternion swing = Quaternion.FromToRotation(inheritedAim, aRot * dT.normalized);
+					_jointBones[i].rotation = swing * inheritedWorld;
+				}
+			}
 		}
 
 		_bonesAreModified = true;
@@ -341,7 +402,63 @@ public class SMPLModifyBones {
 		Vector3 rightB = (bindLocalPos[2] - bindLocalPos[1]).normalized;
 		_pelvisBindBasis = Quaternion.LookRotation(Vector3.Cross(rightB, upB).normalized, upB);
 
+		// Bind basis for the spine/neck twist chain.
+		_isTorso = new bool[22];
+		_torsoBlendByJoint = new float[22];
+		_torsoBindBasis = new Quaternion[22];
+		for (int k = 0; k < _torsoJoints.Length; k++)
+		{
+			int t = _torsoJoints[k];
+			int c = _primaryChild[t];
+			_isTorso[t] = true;
+			_torsoBlendByJoint[t] = _torsoBlend[k];
+			Vector3 up = (bindLocalPos[c] - bindLocalPos[t]).normalized;
+			Vector3 right = TorsoRight(bindLocalPos, _torsoBlend[k]);
+			_torsoBindBasis[t] = Quaternion.LookRotation(Vector3.Cross(right, up).normalized, up);
+		}
+
+		// Hip twist bind basis (legs straight at bind, so anchor the pole to body forward/back).
+		_isHipBasis = new bool[22];
+		_hipBindBasis = new Quaternion[22];
+		Vector3 bindForward = (_pelvisBindBasis * Vector3.forward).normalized;
+		for (int h = 1; h <= 2; h++)   // L_Hip, R_Hip
+		{
+			int c = _primaryChild[h];
+			Vector3 aim = bindLocalPos[c] - bindLocalPos[h];
+			Quaternion b;
+			if (TryAimPoleBasis(aim, HIP_POLE_SIGN * bindForward, out b))
+			{
+				_isHipBasis[h] = true;
+				_hipBindBasis[h] = b;
+			}
+		}
+
 		_retargetCaptured = true;
+	}
+
+	// Full orientation from a bone direction (`aim`) and a bend pole (`pole`): the bone's
+	// length axis follows `aim`, twist fixed so the bend plane contains `pole`. Returns
+	// false if `pole` is ~parallel to `aim` (straight limb -> twist undefined).
+	private static bool TryAimPoleBasis(Vector3 aim, Vector3 pole, out Quaternion basis)
+	{
+		Vector3 up = aim;
+		if (up.sqrMagnitude < 1e-10f) { basis = Quaternion.identity; return false; }
+		up.Normalize();
+		Vector3 right = Vector3.Cross(pole, up);
+		if (right.sqrMagnitude < 1e-6f) { basis = Quaternion.identity; return false; }
+		right.Normalize();
+		Vector3 fwd = Vector3.Cross(up, right);
+		basis = Quaternion.LookRotation(fwd, up);
+		return true;
+	}
+
+	// Body left/right axis for the torso, blended from the hip line (f=0) to the shoulder
+	// line (f=1). Used to give the spine/neck a twist reference. `p` is indexed by joint.
+	private static Vector3 TorsoRight(Vector3[] p, float f)
+	{
+		Vector3 hipR = (p[2] - p[1]).normalized;      // L_Hip -> R_Hip
+		Vector3 shoulderR = (p[17] - p[16]).normalized;  // L_Shoulder -> R_Shoulder
+		return Vector3.Lerp(hipR, shoulderR, f).normalized;
 	}
 
 

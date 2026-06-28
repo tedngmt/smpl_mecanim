@@ -82,6 +82,9 @@ public class SMPLBlendshapes : MonoBehaviour {
 	 */
 	void OnApplicationQuit()
 	{
+		if (_modifyBones == null)
+			return;
+
 		resetShapeParms ();
 		setShapeBlendValues ();
 		setPoseBlendValues ();
@@ -152,6 +155,12 @@ public class SMPLBlendshapes : MonoBehaviour {
 	 */ 
 	void setPoseBlendValues()
 	{
+		// Not yet initialized (e.g. Start() bailed out because this component isn't on the
+		// SkinnedMeshRenderer mesh object, or the joint-regressor JSON is missing). Skip
+		// rather than NRE every frame; the avatar still animates without pose blendshapes.
+		if (_modifyBones == null)
+			return;
+
 		Transform[] _bones = _modifyBones.getBones();
 		Dictionary<string, int> _boneNameToJointIndex = _modifyBones.getB2J_indices();
 		string _boneNamePrefix = _modifyBones.getBoneNamePrefix();
