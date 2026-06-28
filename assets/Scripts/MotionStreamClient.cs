@@ -26,6 +26,9 @@ public class MotionStreamClient : MonoBehaviour
     public string host = "127.0.0.1";
     public int port = 8765;
     public float reconnectInterval = 2.0f;
+    [Tooltip("Smoothly blend between streamed frames at Unity's render rate (decouples " +
+             "playback smoothness from the stream fps; makes slow-motion look smooth).")]
+    public bool interpolate = true;
 
     SMPLBlendshapes[] _avatars;
     CaptionDisplay _captionDisplay;
@@ -33,7 +36,11 @@ public class MotionStreamClient : MonoBehaviour
     float _reconnectTimer;
 
     bool _isStreaming;
-    Vector3[] _lastJoints;
+    Vector3[] _lastJoints;   // newest received target pose
+    Vector3[] _prevJoints;   // previous target, to interpolate from
+    Vector3[] _renderJoints; // reused buffer for the interpolated pose
+    float _lastMsgTime;      // Time.time when _lastJoints arrived
+    float _frameInterval = 0.05f;  // measured gap between frames (seconds)
 
     string _caption = "";
     string _captionM2t = "";
@@ -110,8 +117,23 @@ public class MotionStreamClient : MonoBehaviour
         // Only released back to idle once streaming actually stops (see StopStreaming).
         if (_isStreaming && _lastJoints != null)
         {
+            Vector3[] pose = _lastJoints;
+
+            // Blend from the previous frame to the newest one over the measured frame
+            // interval, so motion is smooth at the render rate regardless of stream fps.
+            if (interpolate && _prevJoints != null && _prevJoints.Length == _lastJoints.Length
+                && _frameInterval > 0f)
+            {
+                float t = Mathf.Clamp01((Time.time - _lastMsgTime) / _frameInterval);
+                if (_renderJoints == null || _renderJoints.Length != _lastJoints.Length)
+                    _renderJoints = new Vector3[_lastJoints.Length];
+                for (int j = 0; j < _lastJoints.Length; j++)
+                    _renderJoints[j] = Vector3.Lerp(_prevJoints[j], _lastJoints[j], t);
+                pose = _renderJoints;
+            }
+
             for (int i = 0; i < _avatars.Length; i++)
-                _avatars[i].ApplyStreamedJoints(_lastJoints);
+                _avatars[i].ApplyStreamedJoints(pose);
         }
     }
 
@@ -130,6 +152,11 @@ public class MotionStreamClient : MonoBehaviour
         {
             case "start":
                 _isStreaming = true;
+                _prevJoints = null;
+                _lastJoints = null;
+                _lastMsgTime = 0f;
+                float startFps = node["fps"].AsFloat;
+                if (startFps > 0.01f) _frameInterval = 1f / startFps;  // initial estimate; refined per frame
                 UpdateCaptions(node);
                 Debug.Log("[MotionStreamClient] start '" + node["name"].Value + "' (" +
                           node["num_frames"].AsInt + " frames @ " + node["fps"].AsFloat + " fps)");
@@ -182,6 +209,12 @@ public class MotionStreamClient : MonoBehaviour
             joints[i] = new Vector3(p[0].AsFloat, p[1].AsFloat, p[2].AsFloat);
         }
 
+        // Keep the previous target and measure the arrival gap so LateUpdate can
+        // interpolate between frames (auto-adapts to --fps and --speed on the sender).
+        _prevJoints = _lastJoints;
+        if (_lastMsgTime > 0f)
+            _frameInterval = Mathf.Clamp(Time.time - _lastMsgTime, 0.001f, 0.5f);
+        _lastMsgTime = Time.time;
         _lastJoints = joints;
     }
 
