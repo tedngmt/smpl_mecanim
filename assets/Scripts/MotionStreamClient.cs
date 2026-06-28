@@ -1,6 +1,6 @@
 /*
     Connects to the MG-MotionLLM Python WebSocket server (see
-    C:\Linux\MG-MotionLLM\utils\unity_stream.py and eval_*_stream.py) and drives the
+    C:\Linux\MG-MotionLLM\utils\unity_stream.py and *_unity_stream.py) and drives the
     SMPL avatar's bones frame-by-frame from the received motion + caption stream.
 
     Message schema sent by the server (one JSON object per text frame):
@@ -22,7 +22,7 @@ using MinimalWebSocket;
 
 public class MotionStreamClient : MonoBehaviour
 {
-    [Tooltip("Machine running eval_m2t_stream.py / eval_m2dt_stream.py / eval_compare_stream.py")]
+    [Tooltip("Machine running m2t_unity_stream.py / m2dt_unity_stream.py / m2t_and_m2dt_unity_stream.py")]
     public string host = "127.0.0.1";
     public int port = 8765;
     public float reconnectInterval = 2.0f;
