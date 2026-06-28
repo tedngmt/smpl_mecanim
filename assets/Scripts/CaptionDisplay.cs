@@ -47,7 +47,13 @@ public class CaptionDisplay : MonoBehaviour
     {
         if (!show) return;
 
-        string text = string.IsNullOrEmpty(_secondary) ? _primary : _primary + "\n" + _secondary;
+        // When both are present (compare mode) label them so the simple (M2T) and detailed
+        // (M2DT) captions are clearly distinguishable; a single caption is shown unlabeled.
+        string text;
+        if (!string.IsNullOrEmpty(_secondary))
+            text = "Simple:  " + _primary + "\nDetail:  " + _secondary;
+        else
+            text = _primary;
         if (string.IsNullOrEmpty(text)) return;
 
         GUIStyle style = new GUIStyle(GUI.skin.label);
@@ -55,7 +61,11 @@ public class CaptionDisplay : MonoBehaviour
         style.normal.textColor = Color.white;
         style.wordWrap = true;
 
-        Rect box = new Rect(10, Screen.height - 90, Screen.width - 20, 80);
+        // Auto-size the box to the (word-wrapped) text so neither caption gets clipped.
+        float width = Screen.width - 20;
+        float textHeight = style.CalcHeight(new GUIContent(text), width - 20);
+        float boxHeight = textHeight + 10;
+        Rect box = new Rect(10, Screen.height - boxHeight - 10, width, boxHeight);
         GUI.Box(box, GUIContent.none);
         GUI.Label(new Rect(box.x + 10, box.y + 5, box.width - 20, box.height - 10), text, style);
     }

@@ -301,6 +301,15 @@ public class SMPLBlendshapes : MonoBehaviour {
 		return _modifyBones.updateBoneAngles(pose, trans);
 	}
 
+	/*	Bridge for position-based streaming (MotionStreamClient): drive bones from global
+	 *	joint positions instead of per-joint rotations.
+	 */
+	public bool ApplyStreamedJoints(Vector3[] joints)
+	{
+		if (_modifyBones == null) return false;
+		return _modifyBones.updateBoneAnglesFromJoints(joints);
+	}
+
 
 	/* Load shape parameters, aka 'betas', from the JSON file provided. 
 	 * These parameters change the body shape of the model according to 

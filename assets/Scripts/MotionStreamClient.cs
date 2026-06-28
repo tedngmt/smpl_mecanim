@@ -5,8 +5,9 @@
 
     Message schema sent by the server (one JSON object per text frame):
         {"type": "start", "name": str, "fps": float, "num_frames": int, ...caption fields}
-        {"type": "frame", "frame": int, "pose": [[x,y,z,w] x 24], "trans": [x,y,z], ...caption fields}
+        {"type": "frame", "frame": int, "joints": [[x,y,z] x 22], ...caption fields}
         {"type": "end", "name": str}
+    "joints" are global joint positions (index 0 = pelvis); see SMPLModifyBones.updateBoneAnglesFromJoints.
     Caption fields vary by script: "caption" (m2t/m2dt) or "caption_m2t" + "caption_m2dt" (compare).
 
     No scene editing is required: this component bootstraps itself at runtime via
@@ -32,8 +33,7 @@ public class MotionStreamClient : MonoBehaviour
     float _reconnectTimer;
 
     bool _isStreaming;
-    float[][] _lastPose;
-    float[] _lastTrans;
+    Vector3[] _lastJoints;
 
     string _caption = "";
     string _captionM2t = "";
@@ -108,10 +108,10 @@ public class MotionStreamClient : MonoBehaviour
         // clip's fps (~20-30) while Unity renders much faster -- holding the last pose
         // steady avoids flickering back to the Animator's idle pose in between messages.
         // Only released back to idle once streaming actually stops (see StopStreaming).
-        if (_isStreaming && _lastPose != null)
+        if (_isStreaming && _lastJoints != null)
         {
             for (int i = 0; i < _avatars.Length; i++)
-                _avatars[i].ApplyStreamedPose(_lastPose, _lastTrans);
+                _avatars[i].ApplyStreamedJoints(_lastJoints);
         }
     }
 
@@ -171,20 +171,18 @@ public class MotionStreamClient : MonoBehaviour
 
     void ApplyFrame(JSONNode node)
     {
-        JSONNode poseNode = node["pose"];
-        JSONNode transNode = node["trans"];
-        if (poseNode == null || transNode == null) return;
+        JSONNode jointsNode = node["joints"];
+        if (jointsNode == null) return;
 
-        int numJoints = poseNode.Count;
-        var pose = new float[numJoints][];
+        int numJoints = jointsNode.Count;
+        var joints = new Vector3[numJoints];
         for (int i = 0; i < numJoints; i++)
         {
-            JSONNode q = poseNode[i];
-            pose[i] = new float[] { q[0].AsFloat, q[1].AsFloat, q[2].AsFloat, q[3].AsFloat };
+            JSONNode p = jointsNode[i];
+            joints[i] = new Vector3(p[0].AsFloat, p[1].AsFloat, p[2].AsFloat);
         }
 
-        _lastPose = pose;
-        _lastTrans = new float[] { transNode[0].AsFloat, transNode[1].AsFloat, transNode[2].AsFloat };
+        _lastJoints = joints;
     }
 
     void OnApplicationQuit()
