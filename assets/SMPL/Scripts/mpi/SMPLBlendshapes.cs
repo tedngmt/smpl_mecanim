@@ -319,8 +319,18 @@ public class SMPLBlendshapes : MonoBehaviour {
 		return _modifyBones.updateBoneAnglesFromJoints(joints);
 	}
 
+	/*	Bridge for the EXPERIMENTAL rotation-driven path (MotionStreamClient.driveByRotation):
+	 *	pose bones from the streamed per-joint global orientations (captures axial twist the
+	 *	position path cannot). `joints` is still used to place the pelvis.
+	 */
+	public bool ApplyStreamedGlobalRotations(Vector3[] joints, Quaternion[] globalRots)
+	{
+		if (_modifyBones == null) return false;
+		return _modifyBones.updateBoneAnglesFromGlobalRotations(joints, globalRots);
+	}
 
-	/* Load shape parameters, aka 'betas', from the JSON file provided. 
+
+	/* Load shape parameters, aka 'betas', from the JSON file provided.
 	 * These parameters change the body shape of the model according to 
 	 * the shape-parametrization defined in the SMPL model paper
 	 */

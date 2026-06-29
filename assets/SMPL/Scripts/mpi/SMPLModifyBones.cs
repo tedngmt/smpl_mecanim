@@ -368,6 +368,59 @@ public class SMPLModifyBones {
 		return true;
 	}
 
+	// EXPERIMENTAL rotation-driven retarget. Instead of aiming each bone at its child
+	// (which recovers swing only -- never a bone's axial twist, e.g. forearm pronation), pose
+	// every bone straight from the streamed *global* joint orientations, so twist comes from
+	// the data and the hardcoded torso/hip twist heuristics are no longer needed.
+	//
+	// ONLY the pelvis translates; every other bone is rotation-only and its position follows
+	// from the bind-length hierarchy (childWorldPos = parentWorldPos + parentWorldRot * offset,
+	// offset = the untouched bind localPosition). World rotations are set in parent-before-child
+	// index order (every entry of _parent is < its index), so a parent is final before its
+	// child is set -- children keep their offsets and ride the parent.
+	//
+	// Which rotation drives which bone: HumanML3D's global rotation Q_j orients the segment that
+	// ENDS at j, i.e. Q_j @ rawoffset_j == dir(parent_j -> j) [verified in Python to <0.04 deg].
+	// A Unity transform `i` orients the segment that LEAVES it (i -> child). So bone i is driven
+	// by its child's rotation:  bone[i].rotation = aRot * Q[child] * _bindRotLocal[i]. The pelvis
+	// (root) is the exception: it carries the body's root frame Q[0] itself. The avatar's bind
+	// pose IS the SMPL zero-pose, so the bind reference is identity and the per-bone calibration
+	// reduces to the captured _bindRotLocal[i]. (The aRot / _bindRotLocal mapping is the part to
+	// confirm in-editor: a constant per-bone offset would point here.)
+	public bool updateBoneAnglesFromGlobalRotations(Vector3[] targets, Quaternion[] globalRots)
+	{
+		if (!_initialized || globalRots == null || globalRots.Length < 22)
+			return false;
+		if (targets == null || targets.Length < 1)
+			return false;
+
+		Transform avatarT = targetRenderer.transform.parent;
+		if (!_retargetCaptured)
+			_captureRetargetBind(avatarT);
+
+		Quaternion aRot = avatarT.rotation;
+
+		// Pelvis (root): the only joint that translates; oriented by its own global frame.
+		_jointBones[0].position = avatarT.TransformPoint(targets[0]);
+		_jointBones[0].rotation = aRot * globalRots[0] * _bindRotLocal[0];
+
+		// Every other bone: rotation-only, driven by its PRIMARY CHILD's global rotation so the
+		// outgoing segment is oriented (with twist). Leaves (wrist/foot/head, child = -1) carry
+		// no outgoing segment, so they are left to ride their parent rigidly.
+		for (int i = 1; i < 22; i++)
+		{
+			if (_jointBones[i] == null)
+				continue;
+			int c = _primaryChild[i];
+			if (c < 0)
+				continue;
+			_jointBones[i].rotation = aRot * globalRots[c] * _bindRotLocal[i];
+		}
+
+		_bonesAreModified = true;
+		return true;
+	}
+
 	// Capture the bind (rest) pose references once, from _bonesBackup (cloned untouched at
 	// init), expressed in the avatar's local space so the retarget is independent of where
 	// the avatar is placed.

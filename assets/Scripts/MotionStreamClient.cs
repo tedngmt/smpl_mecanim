@@ -29,6 +29,10 @@ public class MotionStreamClient : MonoBehaviour
     [Tooltip("Smoothly blend between streamed frames at Unity's render rate (decouples " +
              "playback smoothness from the stream fps; makes slow-motion look smooth).")]
     public bool interpolate = true;
+    [Tooltip("EXPERIMENTAL: drive bones from the streamed per-joint global rotations (captures " +
+             "axial twist the position-based retarget cannot) instead of from joint positions. " +
+             "Falls back to positions automatically if a frame carries no 'rotations' field.")]
+    public bool driveByRotation = false;
 
     SMPLBlendshapes[] _avatars;
     CaptionDisplay _captionDisplay;
@@ -39,6 +43,9 @@ public class MotionStreamClient : MonoBehaviour
     Vector3[] _lastJoints;   // newest received target pose
     Vector3[] _prevJoints;   // previous target, to interpolate from
     Vector3[] _renderJoints; // reused buffer for the interpolated pose
+    Quaternion[] _lastRot;   // newest received per-joint global rotations (Unity frame), or null
+    Quaternion[] _prevRot;   // previous, to slerp from
+    Quaternion[] _renderRot; // reused buffer for the interpolated rotations
     float _lastMsgTime;      // Time.time when _lastJoints arrived
     float _frameInterval = 0.05f;  // measured gap between frames (seconds)
 
@@ -117,14 +124,15 @@ public class MotionStreamClient : MonoBehaviour
         // Only released back to idle once streaming actually stops (see StopStreaming).
         if (_isStreaming && _lastJoints != null)
         {
-            Vector3[] pose = _lastJoints;
-
             // Blend from the previous frame to the newest one over the measured frame
             // interval, so motion is smooth at the render rate regardless of stream fps.
-            if (interpolate && _prevJoints != null && _prevJoints.Length == _lastJoints.Length
-                && _frameInterval > 0f)
+            float t = 1f;
+            if (interpolate && _frameInterval > 0f)
+                t = Mathf.Clamp01((Time.time - _lastMsgTime) / _frameInterval);
+
+            Vector3[] pose = _lastJoints;
+            if (interpolate && _prevJoints != null && _prevJoints.Length == _lastJoints.Length)
             {
-                float t = Mathf.Clamp01((Time.time - _lastMsgTime) / _frameInterval);
                 if (_renderJoints == null || _renderJoints.Length != _lastJoints.Length)
                     _renderJoints = new Vector3[_lastJoints.Length];
                 for (int j = 0; j < _lastJoints.Length; j++)
@@ -132,8 +140,26 @@ public class MotionStreamClient : MonoBehaviour
                 pose = _renderJoints;
             }
 
-            for (int i = 0; i < _avatars.Length; i++)
-                _avatars[i].ApplyStreamedJoints(pose);
+            if (driveByRotation && _lastRot != null)
+            {
+                // Rotation-driven path: pose bones from streamed global orientations (twist-aware).
+                Quaternion[] rotPose = _lastRot;
+                if (interpolate && _prevRot != null && _prevRot.Length == _lastRot.Length)
+                {
+                    if (_renderRot == null || _renderRot.Length != _lastRot.Length)
+                        _renderRot = new Quaternion[_lastRot.Length];
+                    for (int j = 0; j < _lastRot.Length; j++)
+                        _renderRot[j] = Quaternion.Slerp(_prevRot[j], _lastRot[j], t);
+                    rotPose = _renderRot;
+                }
+                for (int i = 0; i < _avatars.Length; i++)
+                    _avatars[i].ApplyStreamedGlobalRotations(pose, rotPose);
+            }
+            else
+            {
+                for (int i = 0; i < _avatars.Length; i++)
+                    _avatars[i].ApplyStreamedJoints(pose);
+            }
         }
     }
 
@@ -154,6 +180,8 @@ public class MotionStreamClient : MonoBehaviour
                 _isStreaming = true;
                 _prevJoints = null;
                 _lastJoints = null;
+                _prevRot = null;
+                _lastRot = null;
                 _lastMsgTime = 0f;
                 float startFps = node["fps"].AsFloat;
                 if (startFps > 0.01f) _frameInterval = 1f / startFps;  // initial estimate; refined per frame
@@ -209,13 +237,29 @@ public class MotionStreamClient : MonoBehaviour
             joints[i] = new Vector3(p[0].AsFloat, p[1].AsFloat, p[2].AsFloat);
         }
 
+        // Optional per-joint global rotations (Unity-frame quaternions, x,y,z,w). Present only
+        // when the sender includes them; null otherwise so driveByRotation falls back cleanly.
+        JSONNode rotNode = node["rotations"];
+        Quaternion[] rots = null;
+        if (rotNode != null && rotNode.Count > 0)
+        {
+            rots = new Quaternion[rotNode.Count];
+            for (int i = 0; i < rotNode.Count; i++)
+            {
+                JSONNode q = rotNode[i];
+                rots[i] = new Quaternion(q[0].AsFloat, q[1].AsFloat, q[2].AsFloat, q[3].AsFloat);
+            }
+        }
+
         // Keep the previous target and measure the arrival gap so LateUpdate can
         // interpolate between frames (auto-adapts to --fps and --speed on the sender).
         _prevJoints = _lastJoints;
+        _prevRot = _lastRot;
         if (_lastMsgTime > 0f)
             _frameInterval = Mathf.Clamp(Time.time - _lastMsgTime, 0.001f, 0.5f);
         _lastMsgTime = Time.time;
         _lastJoints = joints;
+        _lastRot = rots;
     }
 
     void OnApplicationQuit()
