@@ -16,6 +16,7 @@
     the bootstrap skips creating a second instance if one is already present.
 */
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using SimpleJSON;
 using MinimalWebSocket;
@@ -35,6 +36,7 @@ public class MotionStreamClient : MonoBehaviour
     public bool driveByRotation = false;
 
     SMPLBlendshapes[] _avatars;
+    BodyPartHighlighter[] _highlighters;
     CaptionDisplay _captionDisplay;
     WebSocketClient _socket;
     float _reconnectTimer;
@@ -67,6 +69,16 @@ public class MotionStreamClient : MonoBehaviour
         _avatars = FindObjectsOfType<SMPLBlendshapes>();
         if (_avatars.Length == 0)
             Debug.LogWarning("[MotionStreamClient] No SMPLBlendshapes found in scene -- pose updates will be skipped.");
+
+        // Ensure each avatar has a body-part highlighter (drives the emissive glow from the
+        // stream's "highlight" field). Added at runtime so no scene editing is needed.
+        _highlighters = new BodyPartHighlighter[_avatars.Length];
+        for (int i = 0; i < _avatars.Length; i++)
+        {
+            var h = _avatars[i].GetComponent<BodyPartHighlighter>();
+            if (h == null) h = _avatars[i].gameObject.AddComponent<BodyPartHighlighter>();
+            _highlighters[i] = h;
+        }
 
         _captionDisplay = FindObjectOfType<CaptionDisplay>();
         if (_captionDisplay == null)
@@ -192,6 +204,7 @@ public class MotionStreamClient : MonoBehaviour
 
             case "frame":
                 UpdateCaptions(node);
+                UpdateHighlight(node);
                 ApplyFrame(node);
                 break;
 
@@ -208,6 +221,24 @@ public class MotionStreamClient : MonoBehaviour
         _isStreaming = false;
         _caption = _captionM2t = _captionM2dt = "";
         if (_captionDisplay != null) _captionDisplay.Clear();
+        if (_highlighters != null)
+            foreach (var h in _highlighters)
+                if (h != null) h.ClearHighlight();
+    }
+
+    // Read the per-frame "highlight" list (joint indices the active caption refers to) and
+    // forward it to each avatar's highlighter. Absent/empty -> nothing highlighted.
+    readonly List<int> _highlight = new List<int>();
+    void UpdateHighlight(JSONNode node)
+    {
+        if (_highlighters == null) return;
+        _highlight.Clear();
+        JSONNode hl = node["highlight"];
+        if (hl != null)
+            for (int i = 0; i < hl.Count; i++)
+                _highlight.Add(hl[i].AsInt);
+        foreach (var h in _highlighters)
+            if (h != null) h.SetActiveJoints(_highlight);
     }
 
     void UpdateCaptions(JSONNode node)
